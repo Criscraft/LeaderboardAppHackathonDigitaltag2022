@@ -53,6 +53,9 @@ app.layout = html.Div([
         # only one file is processed at a time
         multiple=False
     ),
+    html.Div(
+        [html.Button("Refresh Leaderboard", id="btn-refresh-leaderboard")]
+    ),
     html.Div(id='output-data-upload'),
     html.Div(
         [html.Button("Download Leaderboard", id="btn-download"),
@@ -83,7 +86,7 @@ def download_leaderboard_file(n_clicks):
               State('upload-data', 'last_modified'),
               prevent_initial_call=True,
 )
-def update_output(list_of_contents, list_of_names, list_of_dates):
+def read_upload_and_update_output(list_of_contents, list_of_names, list_of_dates):
     if list_of_contents is not None:
         table_div, button_style = parse_contents(
             list_of_contents,
@@ -93,9 +96,28 @@ def update_output(list_of_contents, list_of_names, list_of_dates):
         return table_div, button_style
 
 
+@app.callback(Output('output-data-upload', 'children'),
+              Output('hidden-button', 'style'),
+              Input("btn-refresh-leaderboard", "n_clicks"),
+)
+def update_output(list_of_contents, list_of_names, list_of_dates):
+    table_div, button_style = get_leaderboard()
+    return table_div, button_style
+
+
+def get_leaderboard():
+    load_from_dropbox()
+    loaded_data = pd.read_csv(DATA_PATH)[COLS]
+    loaded_data = loaded_data.sort_values(COLS[1], ascending=False).reset_index(drop=True)
+    return html.Div([dcc.Markdown(
+        loaded_data.to_markdown()
+    )]), {'display': 'block'}
+
+
+
 def parse_contents(contents, filename, date):
-    """Read the uploaded file, extract the accuracy and log-loss, add it to
-    the leaderboard and display the leaderboard
+    """Read the uploaded file, extract the accuracy, add it to
+    the leaderboard and show the leaderboard
 
     Parameters
     ----------
@@ -116,11 +138,7 @@ def parse_contents(contents, filename, date):
 
     load_from_dropbox()
 
-    if filename == 'show_me_the_leaderboard.csv':
-        # special case for debugging
-        show_wo_submission = True
-
-    elif not re.fullmatch(RGX, filename):
+    if not re.fullmatch(RGX, filename):
         # user did not upload a correct submission csv file!
         return html.Div([
             dcc.Markdown(
