@@ -11,7 +11,7 @@ import dropbox
 import numpy as np
 import pandas as pd
 from dash import Dash, Input, Output, dcc, html
-from dash.dependencies import Input, Output, State
+from dash_extensions.enrich import Output, Input, State, DashProxy, MultiplexerTransform
 
 RGX = r'(.*)_submission.csv'
 DATA_PATH = 'static/data.csv'
@@ -20,19 +20,21 @@ COLS = ['team_name', 'accuracy']
 
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 
-app = Dash(
-    __name__, external_stylesheets=external_stylesheets
+app = DashProxy(
+    __name__, 
+    external_stylesheets=external_stylesheets, 
+    prevent_initial_callbacks=True, 
+    transforms=[MultiplexerTransform()],
 )
+
 server = app.server
 
 app.layout = html.Div([
     dcc.Markdown(f'''
     # Hackathon 2022 Leaderboard
-
     Upload your submission csv file, and see your temporary score.
     
     Only csv files of the form *"your team name"*_submission.csv are processed.
-
     '''),
     dcc.Upload(
         id='upload-data',
@@ -53,16 +55,16 @@ app.layout = html.Div([
         # only one file is processed at a time
         multiple=False
     ),
-    html.Div(
-        [html.Button("Refresh Leaderboard", id="btn-refresh-leaderboard")]
-    ),
     html.Div(id='output-data-upload'),
     html.Div(
         [html.Button("Download Leaderboard", id="btn-download"),
          dcc.Download(id="download-text")],
         style={'display': 'none'},
         id='hidden-button'
-    )
+    ),
+    html.Div(
+        [html.Button("Refresh Leaderboard", id="btn-refresh-leaderboard", n_clicks=0)]
+    ),
 ])
 
 
@@ -99,13 +101,9 @@ def read_upload_and_update_output(list_of_contents, list_of_names, list_of_dates
 @app.callback(Output('output-data-upload', 'children'),
               Output('hidden-button', 'style'),
               Input("btn-refresh-leaderboard", "n_clicks"),
+              prevent_initial_call=True,
 )
-def update_output(list_of_contents, list_of_names, list_of_dates):
-    table_div, button_style = get_leaderboard()
-    return table_div, button_style
-
-
-def get_leaderboard():
+def update_leaderboard(n_clicks):
     load_from_dropbox()
     loaded_data = pd.read_csv(DATA_PATH)[COLS]
     loaded_data = loaded_data.sort_values(COLS[1], ascending=False).reset_index(drop=True)
@@ -113,6 +111,7 @@ def get_leaderboard():
         loaded_data.to_markdown()
     )]), {'display': 'block'}
 
+    
 
 
 def parse_contents(contents, filename, date):
@@ -125,7 +124,6 @@ def parse_contents(contents, filename, date):
         the uploaded csv file
     filename : string
     date : str
-
     Returns
     -------
     html.Div object
@@ -133,7 +131,6 @@ def parse_contents(contents, filename, date):
     """
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
-    show_wo_submission = False
     team_name = 'none'
 
     load_from_dropbox()
@@ -149,40 +146,34 @@ def parse_contents(contents, filename, date):
         # the actual upload case
         team_name = re.match(RGX, filename).group(1)
 
-    if not show_wo_submission:
-        logits = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
-        logits = logits.to_numpy()[:,1:]
-        try:
-            acc = compute_score(logits)
-        except:
-            return html.Div([
-                dcc.Markdown('**Undefined error**')
-            ]), {'display': 'none'}
+    logits = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+    logits = logits.to_numpy()[:,1:]
+    try:
+        acc = compute_score(logits)
+    except:
+        return html.Div([
+            dcc.Markdown('**Undefined error**')
+        ]), {'display': 'none'}
 
-        if acc is None:
-            return html.Div([
-                dcc.Markdown(
-                    '**The number of predictions does not match the number of test samples.**')
-            ]), {'display': 'none'}
+    if acc is None:
+        return html.Div([
+            dcc.Markdown(
+                '**The number of predictions does not match the number of test samples.**')
+        ]), {'display': 'none'}
 
-        loaded_data = pd.read_csv(DATA_PATH)[COLS]
+    loaded_data = pd.read_csv(DATA_PATH)[COLS]
 
-        new_data = pd.DataFrame({
-            'team_name': [team_name], 'accuracy': [acc]
-        }, index=[0])[COLS]
-        loaded_data = pd.concat([loaded_data, new_data]).reset_index(drop=True)
-        loaded_data.to_csv(DATA_PATH)
-        # update the data.csv in the repository
-        write_to_dropbox()
-    else:
-        acc = -1.
-
-        loaded_data = pd.read_csv(DATA_PATH)[COLS]
+    new_data = pd.DataFrame({
+        'team_name': [team_name], 'accuracy': [acc]
+    }, index=[0])[COLS]
+    loaded_data = pd.concat([loaded_data, new_data]).reset_index(drop=True)
+    loaded_data.to_csv(DATA_PATH)
+    # update the data.csv in the repository
+    write_to_dropbox()
 
     loaded_data = loaded_data.sort_values(COLS[1], ascending=False).reset_index(drop=True)
 
     return html.Div([dcc.Markdown(f'''
-
     ### Your accuracy: {acc}
     '''), dcc.Markdown(
         loaded_data.to_markdown()

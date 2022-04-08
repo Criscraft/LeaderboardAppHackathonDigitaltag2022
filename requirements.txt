@@ -1,5 +1,6 @@
 pandas
 dash
+dash-extensions
 dropbox
 gunicorn
 tabulate
